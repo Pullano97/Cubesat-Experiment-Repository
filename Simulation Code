@@ -1,0 +1,181 @@
+%% Simulation of electron trajectories in the presence 
+of a dipole (minimagnetosphere)
+% Simulation performed on the minimum magnetic field 
+% necessary to shield the maximum of the electron energy distribution
+clear all
+close all
+clc
+
+%% Physical Parameters
+
+mu0 = 4*pi*1e-7;      % vacuum permeability (H/m)
+mu_r = 100;           % relative permeability of the ferromagnetic core
+m_e = 9.11e-31;       % mass of the electron (kg)
+q_e = -1.602e-19;     % charge of the electron (C)
+L = 0.1;              % size to protect (m)
+
+%% Energy Values (in keV)
+
+E_keV_values = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+numE = length(E_keV_values);
+
+%% Calculation of the minimum dipole moment to shield electrons at 
+% 100 keV
+
+E_100_J = 100 * 1.602e-16;   % conversion to Joules
+mu_d_min = (4*pi*L^2/(mu0*mu_r)) * (sqrt(2*m_e*E_100_J)/abs(q_e));
+mu_d = mu_d_min;  % we use this value for all simulations
+
+%% Preallocation of Results
+
+defl_angle = zeros(1, numE);
+min_distance = zeros(1, numE);
+rL_theoretical = zeros(1, numE);
+
+%% Settings for Numerical Integration (ode45)
+% We choose an interval so that the electron starts far away, 
+% passes close to the dipole, and then moves away
+
+tspan = [0, 2e-7];
+options = odeset('RelTol',1e-8,'AbsTol',1e-10);
+
+%% Figure: Trajectories in the X-Z Plane (zoom to highlight 
+% the interaction)
+
+figure(1);
+clf; hold on; grid on;
+xlabel('X (m)'); ylabel('Z (m)');
+title('Trajectories in the X-Z Plane for Different Energies');
+colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', [0.5 0 0.5], ...,
+[1 0.5 0], [0.2 0.6 0.8]];
+
+%% Loop over Energies
+
+for i = 1:numE
+    E_keV = E_keV_values(i);
+    E_J = E_keV * 1.602e-16;       % conversion from keV to Joules
+    v0 = sqrt(2*E_J/m_e);           % initial velocity
+    
+    % Initial conditions:
+    % The electron starts far away, for example, x0 = -10*L, 
+    % with a small offset in z
+    
+    x0 = -10 * L; 
+    y0 = 0;
+    z0 = 0.1 * L;
+    
+    % Set the velocity so that the electron moves towards 
+    % the dipole (i.e., towards increasing x)
+    
+    theta = 0;  % main direction along x
+    vx0 = v0 * cos(theta);
+    vy0 = 0;   % no component along y
+    vz0 = 0;   % the initial z component is given only by 
+               % the positional offset
+    y0_vec = [x0; y0; z0; vx0; vy0; vz0];
+    
+    % Numerical integration (ode45)
+    
+    [t, Y] = ode45(@(t,y) equazioni_moto(t, y, mu_d, mu_r, L), ...,
+    tspan, y0_vec, options);
+    pos = Y(:,1:3);
+    vel = Y(:,4:6);
+    
+    % Calculation of the theoretical Larmor radius (using the field 
+    % at distance L)
+    
+    B_L = (mu0*mu_r*mu_d)/(4*pi*L^3);
+    rL_theoretical(i) = sqrt(2*m_e*E_J)/(abs(q_e)*B_L);
+    
+    % Calculation of the minimum distance from the center 
+    % (norm of the position)
+    
+    r_all = sqrt(sum(pos.^2,2));
+    min_distance(i) = min(r_all);
+    
+    % Calculation of the final deflection angle (in the X-Z plane, 
+    % using atan2(z,x))
+    
+    vf = vel(end,:);
+    angle_rad = atan2(vf(3), vf(1));
+    defl_angle(i) = angle_rad * 180/pi;
+    
+    % PLOT of the trajectory in the X-Z plane (zoom to 
+    % highlight the interaction zone)
+    
+    figure(1);
+    plot(pos(:,1), pos(:,3), colors(i), 'LineWidth', 1.5);
+    xlim([-1 1]); ylim([-1 1]);
+    
+    % 3D PLOT for each energy (figure 100+i)
+    
+    figure(100+i);
+    clf; hold on; grid on;
+    plot3(pos(:,1), pos(:,2), pos(:,3), colors(i), ..., 
+    'LineWidth', 1.5);
+    
+    % Mark the center (dipole/satellite)
+    
+    plot3(0,0,0, 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'r');
+    xlabel('X (m)'); ylabel('Y (m)'); zlabel('Z (m)');
+    title(sprintf('3D Trajectory - E = %d keV, ...,
+    \\mu_d = %.2f A·m^2', E_keV, mu_d));
+    xlim([-1 1]); ylim([-1 1]); zlim([-1 1]);
+    
+    % Warning if the electron comes too close to the dipole 
+    % (r < 0.01 m)
+    
+    if min(r_all) < 0.01
+        warning('For energy %d keV the electron came too close to the dipole.', E_keV);
+    end
+end
+
+figure(1);
+legend('10 keV', '20 keV', '30 keV', '40 keV', '50 keV', ...,
+'60 keV', '70 keV', '80 keV', '90 keV', '100 keV', ...,
+'Location', 'best');
+
+%% Output of the Results
+
+fprintf('The typical results obtained include:\n');
+fprintf(' - The trajectory of the electrons in the x-z plane or in 3D, \n   to highlight the deviation from the straight path;\n');
+fprintf(' - The final deflection angle as a function of energy;\n');
+fprintf(' - The comparison between the theoretical Larmor radius and \n   the distance L to protect (shielding criterion);\n');
+fprintf(' - The minimum distance from the center of the magnetic system, \n   to verify if the satellite is successfully "shielded".\n\n');
+
+fprintf('Final Deflection Angle (°):\n');
+for i = 1:numE
+    fprintf('  %5.1f keV: %.8f°\n', E_keV_values(i), defl_angle(i));
+end
+
+fprintf('\nComparison Larmor Radius vs L:\n');
+for i = 1:numE
+    fprintf('  %5.1f keV: r_L = %.3e m, L = %.3f m\n', E_keV_values(i), rL_theoretical(i), L);
+end
+
+fprintf('\nMinimum Distance from the Center of the Magnetic System:\n');
+for i = 1:numE
+    fprintf('  %5.1f keV: %.8f m\n', E_keV_values(i), min_distance(i));
+end
+
+%% Comparison Plots
+% Final Deflection Angle vs Energy
+
+figure(2);
+plot(E_keV_values, defl_angle, 'ko-', 'LineWidth', 1.5, 'MarkerFaceColor','k');
+xlabel('Energy (keV)');
+ylabel('Final Deflection Angle (°)');
+title('Final Deflection Angle vs Energy');
+grid on;
+
+% Larmor Radius vs L
+
+figure(3);
+plot(E_keV_values, rL_theoretical, 'bs-', 'LineWidth', 1.5, 'MarkerFaceColor','b');
+hold on;
+plot(E_keV_values, L*ones(size(E_keV_values)), 'r--', 'LineWidth', 1.5);
+xlabel('Energy (keV)');
+ylabel('Larmor Radius (m)');
+title('Theoretical Larmor Radius vs L');
+legend('Larmor radius','L');
+grid on;
